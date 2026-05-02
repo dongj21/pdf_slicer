@@ -61,11 +61,39 @@ describe('pdfSplitter', () => {
     const file = await makePdfFile(4);
     const singlePage = await splitPdfBySize(file, 900);
     const firstPartSize = singlePage.parts[0].sizeBytes;
-    const result = await splitPdfBySize(file, firstPartSize + 20);
+    const result = await splitPdfBySize(file, firstPartSize + 20, undefined, 0);
 
     expect(result.parts.length).toBeGreaterThan(1);
     expect(result.parts.every((part) => part.pageStart <= part.pageEnd)).toBe(true);
     expect(result.parts.every((part) => part.sizeBytes <= firstPartSize + 20)).toBe(true);
+  });
+
+  it('overlaps adjacent chunks by the requested number of pages', async () => {
+    const file = await makePdfFile(12);
+    let limit = 1_000;
+    let result = await splitPdfBySize(file, limit, undefined, 2);
+
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const firstChunkPageCount = result.parts[0].pageEnd - result.parts[0].pageStart + 1;
+
+      if (result.parts.length >= 2 && firstChunkPageCount > 2) {
+        break;
+      }
+
+      limit += 500;
+      result = await splitPdfBySize(file, limit, undefined, 2);
+    }
+
+    expect(result.parts[1].pageStart).toBe(result.parts[0].pageEnd - 1);
+    expect(result.parts.every((part) => part.sizeBytes <= limit)).toBe(true);
+  });
+
+  it('still advances when the configured overlap is larger than the chunk', async () => {
+    const file = await makePdfFile(4);
+    const result = await splitPdfBySize(file, 900, undefined, 5);
+
+    expect(result.parts.length).toBeGreaterThan(1);
+    expect(result.parts[1].pageStart).toBeGreaterThan(result.parts[0].pageStart);
   });
 
   it('flags a single page that is larger than the limit', async () => {

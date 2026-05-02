@@ -25,6 +25,7 @@ export type SplitResult = {
   originalName: string;
   originalSizeBytes: number;
   pageCount: number;
+  overlapPages: number;
   parts: PdfPart[];
   warnings: string[];
 };
@@ -38,6 +39,8 @@ export type ZipResult = {
 export type ProgressCallback = (progress: SplitProgress) => void;
 
 const PDF_MIME_TYPE = 'application/pdf';
+
+export const DEFAULT_OVERLAP_PAGES = 5;
 
 async function createPdfForPages(sourcePdf: PDFDocument, pageIndexes: number[]): Promise<Uint8Array> {
   const outputPdf = await PDFDocument.create();
@@ -74,7 +77,8 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 export async function splitPdfBySize(
   file: File,
   maxBytes: number,
-  onProgress?: ProgressCallback
+  onProgress?: ProgressCallback,
+  overlapPages = DEFAULT_OVERLAP_PAGES
 ): Promise<SplitResult> {
   const hasPdfExtension = file.name.toLowerCase().endsWith('.pdf');
   const hasPdfMimeType = file.type === PDF_MIME_TYPE || file.type === 'application/x-pdf';
@@ -109,8 +113,9 @@ export async function splitPdfBySize(
   const pageCount = sourcePdf.getPageCount();
   const parts: PdfPart[] = [];
   const warnings: string[] = [];
-  let currentPageIndexes: number[] = [];
-  let currentBytes: Uint8Array | null = null;
+  const requestedOverlapPages = Math.max(0, Math.floor(overlapPages));
+  let chunkStartIndex = 0;
+  let furthestPageReached = 0;
 
   onProgress?.({
     phase: 'splitting',
@@ -119,37 +124,34 @@ export async function splitPdfBySize(
     message: 'Splitting pages'
   });
 
-  for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
-    const candidateIndexes = [...currentPageIndexes, pageIndex];
-    const candidateBytes = await createPdfForPages(sourcePdf, candidateIndexes);
+  while (chunkStartIndex < pageCount) {
+    let currentPageIndexes: number[] = [];
+    let currentBytes: Uint8Array | null = null;
 
-    if (candidateBytes.byteLength <= maxBytes || currentPageIndexes.length === 0) {
-      currentPageIndexes = candidateIndexes;
-      currentBytes = candidateBytes;
-    } else if (currentBytes) {
-      const part = createPdfPart(
-        file.name,
-        parts.length + 1,
-        currentPageIndexes[0] + 1,
-        currentPageIndexes[currentPageIndexes.length - 1] + 1,
-        currentBytes,
-        maxBytes
-      );
-      parts.push(part);
+    for (let pageIndex = chunkStartIndex; pageIndex < pageCount; pageIndex += 1) {
+      const candidateIndexes = [...currentPageIndexes, pageIndex];
+      const candidateBytes = await createPdfForPages(sourcePdf, candidateIndexes);
 
-      currentPageIndexes = [pageIndex];
-      currentBytes = await createPdfForPages(sourcePdf, currentPageIndexes);
+      if (candidateBytes.byteLength <= maxBytes || currentPageIndexes.length === 0) {
+        currentPageIndexes = candidateIndexes;
+        currentBytes = candidateBytes;
+      } else {
+        break;
+      }
+
+      furthestPageReached = Math.max(furthestPageReached, pageIndex + 1);
+      onProgress?.({
+        phase: 'splitting',
+        completed: furthestPageReached,
+        total: pageCount,
+        message: `Processed ${furthestPageReached} of ${pageCount} pages`
+      });
     }
 
-    onProgress?.({
-      phase: 'splitting',
-      completed: pageIndex + 1,
-      total: pageCount,
-      message: `Processed ${pageIndex + 1} of ${pageCount} pages`
-    });
-  }
+    if (currentPageIndexes.length === 0 || !currentBytes) {
+      break;
+    }
 
-  if (currentPageIndexes.length > 0 && currentBytes) {
     parts.push(
       createPdfPart(
         file.name,
@@ -160,6 +162,17 @@ export async function splitPdfBySize(
         maxBytes
       )
     );
+
+    const chunkEndIndex = currentPageIndexes[currentPageIndexes.length - 1];
+
+    if (chunkEndIndex >= pageCount - 1) {
+      break;
+    }
+
+    const actualOverlapPages = Math.min(requestedOverlapPages, currentPageIndexes.length - 1);
+    chunkStartIndex = actualOverlapPages > 0
+      ? chunkEndIndex - actualOverlapPages + 1
+      : chunkEndIndex + 1;
   }
 
   for (const part of parts) {
@@ -174,6 +187,7 @@ export async function splitPdfBySize(
     originalName: file.name,
     originalSizeBytes: file.size,
     pageCount,
+    overlapPages: requestedOverlapPages,
     parts,
     warnings
   };

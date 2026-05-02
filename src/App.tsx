@@ -185,7 +185,7 @@ export function App() {
               <div className="empty-state">
                 <Archive size={28} aria-hidden="true" />
                 <h2>Ready for a large PDF</h2>
-                <p>Parts are created at whole-page boundaries and packaged into one ZIP file.</p>
+                <p>Parts are created at whole-page boundaries, share 5 pages of context, and download as one ZIP file.</p>
               </div>
             )}
 
@@ -220,7 +220,7 @@ export function App() {
                     <h2>{result.parts.length} PDF {result.parts.length === 1 ? 'part' : 'parts'} ready</h2>
                     <p>
                       {result.pageCount} pages from {formatBytes(result.originalSizeBytes)} packaged as{' '}
-                      {formatBytes(zipResult.sizeBytes)}
+                      {formatBytes(zipResult.sizeBytes)}. Adjacent parts overlap by up to {result.overlapPages} pages.
                     </p>
                   </div>
                 </div>
